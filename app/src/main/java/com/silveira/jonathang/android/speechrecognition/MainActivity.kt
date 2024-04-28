@@ -4,20 +4,23 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.SpeechRecognizer
+import android.util.Log
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import com.silveira.jonathang.android.speech.engine.NativeSpeechRecognitionEngine
+import com.silveira.jonathang.android.speech.engine.SpeechRecognitionEngine
+import com.silveira.jonathang.android.speech.recognizer.SpeechRecognitionError
+import com.silveira.jonathang.android.speech.recognizer.SpeechRecognitionListener
 import com.silveira.jonathang.android.speechrecognition.databinding.ActivityMainBinding
-import com.silveira.jonathang.android.speechrecognition.recognizer.NativeSpeechRecognizer
-import com.silveira.jonathang.android.speechrecognition.recognizer.SpeechRecognition
 
-class MainActivity : AppCompatActivity(), RecognitionListener {
+class MainActivity : AppCompatActivity(), SpeechRecognitionListener {
     private val binding: ActivityMainBinding by lazy {
         ActivityMainBinding.inflate(layoutInflater)
     }
 
-    private var speechRecognition: SpeechRecognition? = null
+    private val speechRecognitionEngine: SpeechRecognitionEngine by lazy {
+        NativeSpeechRecognitionEngine()
+    }
 
     private val recordAudioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -35,20 +38,20 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         binding.speechMicButton.setOnClickListener {
             onSpeakButtonClicked()
         }
-    }
-
-    override fun onStart() {
-        super.onStart()
-        speechRecognition = NativeSpeechRecognizer()
+        speechRecognitionEngine.loadLanguageDetails(this)
     }
 
     override fun onStop() {
         super.onStop()
         stopSpeaking()
-        speechRecognition = null
     }
 
     override fun onDestroy() {
+        runCatching {
+            speechRecognitionEngine.shutdown()
+        }.onFailure {
+            log(message = "Error on shutdown engine!", cause = it)
+        }
         recordAudioPermissionLauncher.unregister()
         super.onDestroy()
     }
@@ -68,6 +71,36 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
+    override fun onSpeechReady() {
+        updateLog("Ready to speech...")
+    }
+
+    override fun onSpeechStarted() {
+        updateLog("User started to speech...")
+    }
+
+    override fun onSpeechEnded() {
+        updateLog("User has ended to speech!")
+        stopSpeaking()
+    }
+
+    override fun onSpeechError(cause: SpeechRecognitionError) {
+        updateLog("Error on speech: ${cause.name}")
+        stopSpeaking()
+    }
+
+    override fun onSpeechResult(resultAsText: String?) {
+        if (resultAsText.isNullOrEmpty()) return
+        with(binding.speechEditText) {
+            append(" $resultAsText")
+            val lenght = text?.toString().orEmpty().length
+            setSelection(lenght)
+        }
+        stopSpeaking()
+    }
+
+    override fun onSpeechPartialResults(text: String?) = Unit
+
     private fun checkRecordAudioPermission() {
         recordAudioPermissionLauncher.launch(
             Manifest.permission.RECORD_AUDIO
@@ -78,18 +111,26 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         binding.speechMicButton.setImageResource(
             R.drawable.baseline_mic_24
         )
-        speechRecognition?.startListening(this, this)
+        runCatching {
+            speechRecognitionEngine.startListening(this, this)
+        }.onFailure {
+            log(message = "Error on start listening!", cause = it)
+        }
     }
 
     private fun stopSpeaking() {
         binding.speechMicButton.setImageResource(
             R.drawable.baseline_mic_none_24
         )
-        speechRecognition?.stopListening()
+        runCatching {
+            speechRecognitionEngine.stopListening()
+        }.onFailure {
+            log(message = "Error on stop listening!", cause = it)
+        }
     }
 
     private fun onSpeakButtonClicked() {
-        val isSpeaking = speechRecognition?.isListening == true
+        val isSpeaking = speechRecognitionEngine.isListening
         if (isSpeaking) {
             stopSpeaking()
         } else {
@@ -110,50 +151,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         binding.speechLogText.text = message
     }
 
-    override fun onReadyForSpeech(params: Bundle?) {
-        println("SPEECH_RECOGNITION -> onReadyForSpeech")
-        updateLog("Ready for speeching")
-    }
-
-    override fun onBeginningOfSpeech() {
-        println("SPEECH_RECOGNITION -> onBeginningOfSpeech")
-        updateLog("Speeching")
-    }
-
-    override fun onRmsChanged(rmsdB: Float) {
-        println("SPEECH_RECOGNITION -> onRmsChanged($rmsdB)")
-    }
-
-    override fun onBufferReceived(buffer: ByteArray?) {
-        println("SPEECH_RECOGNITION -> onBufferReceived(${buffer})")
-    }
-
-    override fun onEndOfSpeech() {
-        println("SPEECH_RECOGNITION -> onEndOfSpeech")
-        updateLog("End of speech")
-    }
-
-    override fun onError(error: Int) {
-        println("SPEECH_RECOGNITION -> onError(${error})")
-        updateLog("Error $error")
-        stopSpeaking()
-    }
-
-    override fun onResults(results: Bundle?) {
-        val speechAsString = results
-            ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            ?.joinToString(separator = " ")
-            .orEmpty()
-        println("SPEECH_RECOGNITION -> onResults(${speechAsString})")
-        binding.speechEditText.setText(speechAsString)
-    }
-
-    override fun onPartialResults(partialResults: Bundle?) {
-        println("SPEECH_RECOGNITION -> onPartialResults(${partialResults})")
-        onResults(partialResults)
-    }
-
-    override fun onEvent(eventType: Int, params: Bundle?) {
-        println("SPEECH_RECOGNITION -> onEvent(${eventType}, ${params})")
+    private fun log(message: String, cause: Throwable? = null) {
+        Log.d("SPEECH_RECOGNITION", message, cause)
     }
 }
